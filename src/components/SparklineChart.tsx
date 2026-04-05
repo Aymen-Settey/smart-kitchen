@@ -1,8 +1,8 @@
-import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
-import Svg, { Polyline, Line, Text as SvgText } from 'react-native-svg';
-import { COLORS, RADIUS } from '../utils/theme';
-import { formatChartTime } from '../utils/api';
+import React from "react";
+import { View, Text, StyleSheet } from "react-native";
+import Svg, { Polyline, Line, Text as SvgText } from "react-native-svg";
+import { COLORS, RADIUS } from "../utils/theme";
+import { formatChartTime } from "../utils/api";
 
 const CHART_WIDTH = 300;
 const CHART_HEIGHT = 120;
@@ -20,9 +20,18 @@ interface SparklineChartProps {
   unit: string;
   warningThreshold: number | null;
   dangerThreshold: number | null;
+  showDate?: boolean;
 }
 
-export default function SparklineChart({ data, color, label, unit, warningThreshold, dangerThreshold }: SparklineChartProps) {
+export default function SparklineChart({
+  data,
+  color,
+  label,
+  unit,
+  warningThreshold,
+  dangerThreshold,
+  showDate,
+}: SparklineChartProps) {
   if (!data || data.length < 2) {
     return (
       <View style={styles.card}>
@@ -30,7 +39,9 @@ export default function SparklineChart({ data, color, label, unit, warningThresh
           <Text style={styles.label}>{label}</Text>
         </View>
         <View style={styles.placeholder}>
-          <Text style={styles.placeholderText}>Waiting for data...</Text>
+          <Text style={styles.placeholderText}>
+            There is no data in the last {showDate ? "day" : "hour"}
+          </Text>
         </View>
       </View>
     );
@@ -48,9 +59,10 @@ export default function SparklineChart({ data, color, label, unit, warningThresh
   const plotHeight = CHART_HEIGHT - PADDING.top - PADDING.bottom;
 
   const toX = (i: number) => PADDING.left + (i / (data.length - 1)) * plotWidth;
-  const toY = (v: number) => PADDING.top + plotHeight - ((v - min) / range) * plotHeight;
+  const toY = (v: number) =>
+    PADDING.top + plotHeight - ((v - min) / range) * plotHeight;
 
-  const pointsStr = data.map((d, i) => `${toX(i)},${toY(d.value)}`).join(' ');
+  const pointsStr = data.map((d, i) => `${toX(i)},${toY(d.value)}`).join(" ");
 
   const gridLines = [0, 0.5, 1].map((f) => {
     const val = min + f * range;
@@ -58,18 +70,23 @@ export default function SparklineChart({ data, color, label, unit, warningThresh
   });
 
   const latestValue = values[values.length - 1];
-  const firstTime = formatChartTime(data[0].time);
-  const lastTime = formatChartTime(data[data.length - 1].time);
+  const firstTime = formatChartTime(data[0].time, showDate);
+  const lastTime = formatChartTime(data[data.length - 1].time, showDate);
 
   return (
     <View style={styles.card}>
       <View style={styles.header}>
         <Text style={styles.label}>{label}</Text>
         <Text style={[styles.currentValue, { color }]}>
-          {latestValue.toFixed(1)}{unit ? ` ${unit}` : ''}
+          {latestValue.toFixed(1)}
+          {unit ? ` ${unit}` : ""}
         </Text>
       </View>
-      <Svg width="100%" height={CHART_HEIGHT} viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`}>
+      <Svg
+        width="100%"
+        height={CHART_HEIGHT}
+        viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`}
+      >
         {gridLines.map((g, i) => (
           <React.Fragment key={i}>
             <Line
@@ -92,29 +109,33 @@ export default function SparklineChart({ data, color, label, unit, warningThresh
           </React.Fragment>
         ))}
 
-        {warningThreshold != null && toY(warningThreshold) >= PADDING.top && toY(warningThreshold) <= PADDING.top + plotHeight && (
-          <Line
-            x1={PADDING.left}
-            y1={toY(warningThreshold)}
-            x2={CHART_WIDTH - PADDING.right}
-            y2={toY(warningThreshold)}
-            stroke={COLORS.warning}
-            strokeWidth="0.8"
-            strokeDasharray="4,3"
-          />
-        )}
+        {warningThreshold != null &&
+          toY(warningThreshold) >= PADDING.top &&
+          toY(warningThreshold) <= PADDING.top + plotHeight && (
+            <Line
+              x1={PADDING.left}
+              y1={toY(warningThreshold)}
+              x2={CHART_WIDTH - PADDING.right}
+              y2={toY(warningThreshold)}
+              stroke={COLORS.warning}
+              strokeWidth="0.8"
+              strokeDasharray="4,3"
+            />
+          )}
 
-        {dangerThreshold != null && toY(dangerThreshold) >= PADDING.top && toY(dangerThreshold) <= PADDING.top + plotHeight && (
-          <Line
-            x1={PADDING.left}
-            y1={toY(dangerThreshold)}
-            x2={CHART_WIDTH - PADDING.right}
-            y2={toY(dangerThreshold)}
-            stroke={COLORS.danger}
-            strokeWidth="0.8"
-            strokeDasharray="4,3"
-          />
-        )}
+        {dangerThreshold != null &&
+          toY(dangerThreshold) >= PADDING.top &&
+          toY(dangerThreshold) <= PADDING.top + plotHeight && (
+            <Line
+              x1={PADDING.left}
+              y1={toY(dangerThreshold)}
+              x2={CHART_WIDTH - PADDING.right}
+              y2={toY(dangerThreshold)}
+              stroke={COLORS.danger}
+              strokeWidth="0.8"
+              strokeDasharray="4,3"
+            />
+          )}
 
         <Polyline
           points={pointsStr}
@@ -158,29 +179,29 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     marginBottom: 10,
   },
   label: {
     color: COLORS.textSecondary,
     fontSize: 13,
-    fontWeight: '600',
+    fontWeight: "600",
   },
   currentValue: {
     fontSize: 15,
-    fontWeight: '700',
+    fontWeight: "700",
     letterSpacing: -0.5,
   },
   placeholder: {
     height: CHART_HEIGHT,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
   },
   placeholderText: {
     color: COLORS.textTertiary,
     fontSize: 13,
-    fontWeight: '500',
+    fontWeight: "500",
   },
 });

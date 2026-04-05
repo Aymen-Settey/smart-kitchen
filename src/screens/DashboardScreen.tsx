@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   View,
   Text,
@@ -6,12 +6,18 @@ import {
   RefreshControl,
   TouchableOpacity,
   StyleSheet,
-} from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { COLORS, SENSOR_CONFIG, RADIUS } from '../utils/theme';
-import { fetchLatestData, type SensorData } from '../utils/api';
-import DangerBanner from '../components/DangerBanner';
-import SensorCard from '../components/SensorCard';
+  ActivityIndicator,
+} from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as Notifications from "expo-notifications";
+import { COLORS, SENSOR_CONFIG, RADIUS } from "../utils/theme";
+import { fetchHistoryByMinutes, type SensorData } from "../utils/api";
+import {
+  loadRules,
+  appendLog,
+  type NotificationRule,
+} from "./NotificationsScreen";
+import SparklineChart from "../components/SparklineChart";
 
 interface ThingSpeakConfig {
   channelId: string;
@@ -19,19 +25,78 @@ interface ThingSpeakConfig {
   channelName?: string;
 }
 
-const SENSOR_FIELDS = ['field1', 'field2', 'field3', 'field4', 'field5', 'field6', 'field7'];
+const SENSOR_FIELDS = ["field1", "field2", "field3", "field4", "field5"];
+
+interface TimeFilter {
+  label: string;
+  minutes: number;
+}
+
+const TIME_FILTERS: TimeFilter[] = [
+  { label: "1h", minutes: 60 },
+  { label: "6h", minutes: 360 },
+  { label: "12h", minutes: 720 },
+  { label: "1d", minutes: 1440 },
+  { label: "3d", minutes: 4320 },
+  { label: "1w", minutes: 10080 },
+];
+
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+    shouldShowBanner: true,
+    shouldShowList: true,
+  }),
+});
+
+async function checkThresholds(data: SensorData) {
+  const rules = await loadRules();
+  for (const rule of rules) {
+    if (!rule.enabled) continue;
+    const threshold = parseFloat(rule.threshold);
+    if (isNaN(threshold)) continue;
+    const cfg = SENSOR_CONFIG[rule.fieldKey];
+    if (!cfg) continue;
+    const value = data[cfg.key] as number;
+    const triggered = rule.above ? value > threshold : value < threshold;
+    if (triggered) {
+      await Notifications.scheduleNotificationAsync({
+        content: {
+          title: cfg.label,
+          body:
+            rule.message ||
+            `${cfg.label}: ${value}${cfg.unit ? " " + cfg.unit : ""}`,
+        },
+        trigger: null,
+      });
+      await appendLog({
+        id: `${Date.now()}-${rule.fieldKey}`,
+        fieldKey: rule.fieldKey,
+        message: rule.message,
+        value,
+        threshold,
+        timestamp: new Date().toISOString(),
+      });
+    }
+  }
+}
 
 export default function DashboardScreen() {
   const [config, setConfig] = useState<ThingSpeakConfig | null>(null);
-  const [data, setData] = useState<SensorData | null>(null);
-  const [prevData, setPrevData] = useState<SensorData | null>(null);
+  const [historyData, setHistoryData] = useState<SensorData[]>([]);
+  const [selectedFilter, setSelectedFilter] = useState<TimeFilter>(
+    TIME_FILTERS[0],
+  );
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadConfig = useCallback(async () => {
     try {
-      const stored = await AsyncStorage.getItem('thingspeak_config');
+      const stored = await AsyncStorage.getItem("thingspeak_config");
       if (stored) {
         setConfig(JSON.parse(stored));
       }
@@ -40,18 +105,28 @@ export default function DashboardScreen() {
     }
   }, []);
 
-  const fetchData = useCallback(async (cfg: ThingSpeakConfig) => {
-    try {
-      const result = await fetchLatestData(cfg.channelId, cfg.apiKey);
-      setData((current) => {
-        setPrevData(current);
-        return result;
-      });
-      setError(null);
-    } catch (e: any) {
-      setError(e.message);
-    }
-  }, []);
+  const fetchData = useCallback(
+    async (cfg: ThingSpeakConfig, filter: TimeFilter, showLoader = false) => {
+      try {
+        if (showLoader) setLoading(true);
+        const result = await fetchHistoryByMinutes(
+          cfg.channelId,
+          cfg.apiKey,
+          filter.minutes,
+        );
+        setHistoryData(result);
+        setError(null);
+        if (result.length > 0) {
+          checkThresholds(result[result.length - 1]);
+        }
+      } catch (e: any) {
+        setError(e.message);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     loadConfig();
@@ -60,20 +135,27 @@ export default function DashboardScreen() {
   useEffect(() => {
     if (!config) return;
 
-    fetchData(config);
-    intervalRef.current = setInterval(() => fetchData(config), 15000);
+    fetchData(config, selectedFilter, true);
+    intervalRef.current = setInterval(
+      () => fetchData(config, selectedFilter),
+      15000,
+    );
 
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, [config]);
+  }, [config, selectedFilter]);
 
   useEffect(() => {
     const checkConfig = async () => {
-      const stored = await AsyncStorage.getItem('thingspeak_config');
+      const stored = await AsyncStorage.getItem("thingspeak_config");
       if (stored) {
         const parsed: ThingSpeakConfig = JSON.parse(stored);
-        if (!config || parsed.channelId !== config.channelId || parsed.apiKey !== config.apiKey) {
+        if (
+          !config ||
+          parsed.channelId !== config.channelId ||
+          parsed.apiKey !== config.apiKey
+        ) {
           setConfig(parsed);
         }
       }
@@ -85,9 +167,14 @@ export default function DashboardScreen() {
   const onRefresh = useCallback(async () => {
     if (!config) return;
     setRefreshing(true);
-    await fetchData(config);
+    await fetchData(config, selectedFilter);
     setRefreshing(false);
-  }, [config, fetchData]);
+  }, [config, selectedFilter, fetchData]);
+
+  const handleFilterChange = (filter: TimeFilter) => {
+    setSelectedFilter(filter);
+    setHistoryData([]);
+  };
 
   if (!config) {
     return (
@@ -96,16 +183,17 @@ export default function DashboardScreen() {
           <Text style={styles.setupIcon}>&#9881;</Text>
           <Text style={styles.setupTitle}>Setup Required</Text>
           <Text style={styles.setupText}>
-            Go to the Settings tab to enter your ThingSpeak Channel ID and Read API Key.
+            Go to the Settings tab to enter your ThingSpeak Channel ID and Read
+            API Key.
           </Text>
         </View>
       </View>
     );
   }
 
-  const dangerLevel = data ? Math.round(data.dangerLevel) : 0;
-  const isAlert = dangerLevel >= 2;
-  const valveOpen = dangerLevel < 2;
+  const latestData =
+    historyData.length > 0 ? historyData[historyData.length - 1] : null;
+  const showDate = selectedFilter.minutes > 360;
 
   return (
     <ScrollView
@@ -123,9 +211,21 @@ export default function DashboardScreen() {
       <View style={styles.headerRow}>
         <Text style={styles.title}>Smart Kitchen</Text>
         <View style={styles.statusRow}>
-          <View style={[styles.statusDot, { backgroundColor: isAlert ? COLORS.danger : COLORS.safe }]} />
-          <Text style={[styles.statusText, { color: isAlert ? COLORS.danger : COLORS.safe }]}>
-            {isAlert ? 'Alert active' : 'Monitoring'}
+          <View
+            style={[
+              styles.statusDot,
+              {
+                backgroundColor: latestData ? COLORS.safe : COLORS.textTertiary,
+              },
+            ]}
+          />
+          <Text
+            style={[
+              styles.statusText,
+              { color: latestData ? COLORS.safe : COLORS.textTertiary },
+            ]}
+          >
+            {latestData ? "Connected" : "Offline"}
           </Text>
         </View>
       </View>
@@ -133,48 +233,71 @@ export default function DashboardScreen() {
       {error && (
         <View style={styles.errorBanner}>
           <Text style={styles.errorText}>{error}</Text>
-          <TouchableOpacity onPress={() => fetchData(config)}>
+          <TouchableOpacity
+            onPress={() => fetchData(config, selectedFilter, true)}
+          >
             <Text style={styles.retryText}>Retry</Text>
           </TouchableOpacity>
         </View>
       )}
 
-      <DangerBanner
-        level={data ? data.dangerLevel : 0}
-        timestamp={data ? data.timestamp : null}
-        isConnected={!!data && !error}
-      />
+      <View style={styles.filterRow}>
+        {TIME_FILTERS.map((filter) => (
+          <TouchableOpacity
+            key={filter.label}
+            style={[
+              styles.filterPill,
+              selectedFilter.label === filter.label && styles.filterPillActive,
+            ]}
+            onPress={() => handleFilterChange(filter)}
+          >
+            <Text
+              style={[
+                styles.filterText,
+                selectedFilter.label === filter.label &&
+                  styles.filterTextActive,
+              ]}
+            >
+              {filter.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
 
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>Sensors</Text>
-        <Text style={styles.sectionSub}>Real-time readings</Text>
-      </View>
-
-      <View style={styles.sensorGrid}>
-        {SENSOR_FIELDS.map((fieldKey) => {
-          const cfg = SENSOR_CONFIG[fieldKey];
-          const value = data ? (data[cfg.key] as number) : 0;
-          const prev = prevData ? (prevData[cfg.key] as number) : undefined;
-          return (
-            <SensorCard
-              key={fieldKey}
-              fieldKey={fieldKey}
-              value={value}
-              previousValue={prev}
-            />
-          );
-        })}
-      </View>
-
-      <View style={[styles.valveCard, { borderColor: valveOpen ? COLORS.safe + '4D' : COLORS.danger + '4D' }]}>
-        <View style={styles.valveLeft}>
-          <View style={[styles.statusDot, { backgroundColor: valveOpen ? COLORS.safe : COLORS.danger }]} />
-          <Text style={styles.valveLabel}>Gas valve</Text>
-        </View>
-        <Text style={[styles.valveStatus, { color: valveOpen ? COLORS.safe : COLORS.danger }]}>
-          {valveOpen ? 'OPEN' : 'CLOSED'}
+        <Text style={styles.sectionSub}>
+          {historyData.length} data points · last {selectedFilter.label}
         </Text>
       </View>
+
+      {loading && historyData.length === 0 ? (
+        <View style={styles.loaderContainer}>
+          <ActivityIndicator size="large" color={COLORS.accent} />
+          <Text style={styles.loaderText}>Loading chart data…</Text>
+        </View>
+      ) : (
+        SENSOR_FIELDS.map((fieldKey) => {
+          const cfg = SENSOR_CONFIG[fieldKey];
+          const chartData = historyData.map((d) => ({
+            value: d[cfg.key] as number,
+            time: d.timestamp,
+          }));
+
+          return (
+            <SparklineChart
+              key={fieldKey}
+              data={chartData}
+              color={cfg.color}
+              label={cfg.label}
+              unit={cfg.unit}
+              warningThreshold={cfg.warningThreshold}
+              dangerThreshold={cfg.dangerThreshold}
+              showDate={showDate}
+            />
+          );
+        })
+      )}
     </ScrollView>
   );
 }
@@ -190,20 +313,20 @@ const styles = StyleSheet.create({
     paddingBottom: 30,
   },
   headerRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     marginBottom: 20,
   },
   title: {
     color: COLORS.textPrimary,
     fontSize: 26,
-    fontWeight: '700',
+    fontWeight: "700",
     letterSpacing: -0.8,
   },
   statusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
   },
   statusDot: {
     width: 7,
@@ -213,30 +336,55 @@ const styles = StyleSheet.create({
   },
   statusText: {
     fontSize: 12,
-    fontWeight: '600',
+    fontWeight: "600",
   },
   errorBanner: {
     backgroundColor: COLORS.dangerBg,
     borderRadius: RADIUS.inner,
     borderWidth: 0.5,
-    borderColor: COLORS.danger + '4D',
+    borderColor: COLORS.danger + "4D",
     padding: 14,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     marginBottom: 16,
   },
   errorText: {
     color: COLORS.danger,
     fontSize: 13,
-    fontWeight: '500',
+    fontWeight: "500",
     flex: 1,
     marginRight: 12,
   },
   retryText: {
     color: COLORS.danger,
     fontSize: 13,
-    fontWeight: '700',
+    fontWeight: "700",
+  },
+  filterRow: {
+    flexDirection: "row",
+    marginBottom: 20,
+    gap: 8,
+  },
+  filterPill: {
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: RADIUS.pill,
+    backgroundColor: COLORS.surface,
+    borderWidth: 0.5,
+    borderColor: COLORS.surfaceBorder,
+  },
+  filterPillActive: {
+    backgroundColor: COLORS.accent + "20",
+    borderColor: COLORS.accent + "50",
+  },
+  filterText: {
+    color: COLORS.textTertiary,
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  filterTextActive: {
+    color: COLORS.accent,
   },
   sectionHeader: {
     marginBottom: 14,
@@ -244,43 +392,25 @@ const styles = StyleSheet.create({
   sectionTitle: {
     color: COLORS.textPrimary,
     fontSize: 18,
-    fontWeight: '700',
+    fontWeight: "700",
     letterSpacing: -0.5,
   },
   sectionSub: {
     color: COLORS.textTertiary,
     fontSize: 12,
-    fontWeight: '500',
+    fontWeight: "500",
     marginTop: 2,
   },
-  sensorGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    marginBottom: 16,
+  loaderContainer: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 60,
   },
-  valveCard: {
-    backgroundColor: COLORS.surface,
-    borderRadius: RADIUS.card,
-    borderWidth: 0.5,
-    padding: 16,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  valveLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  valveLabel: {
-    color: COLORS.textSecondary,
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  valveStatus: {
-    fontSize: 14,
-    fontWeight: '700',
-    letterSpacing: 1.5,
+  loaderText: {
+    color: COLORS.textTertiary,
+    fontSize: 13,
+    fontWeight: "500",
+    marginTop: 12,
   },
   setupCard: {
     backgroundColor: COLORS.surface,
@@ -289,7 +419,7 @@ const styles = StyleSheet.create({
     borderColor: COLORS.surfaceBorder,
     padding: 30,
     margin: 20,
-    alignItems: 'center',
+    alignItems: "center",
   },
   setupIcon: {
     fontSize: 40,
@@ -299,14 +429,14 @@ const styles = StyleSheet.create({
   setupTitle: {
     color: COLORS.textPrimary,
     fontSize: 18,
-    fontWeight: '700',
+    fontWeight: "700",
     marginBottom: 8,
   },
   setupText: {
     color: COLORS.textSecondary,
     fontSize: 14,
-    fontWeight: '500',
-    textAlign: 'center',
+    fontWeight: "500",
+    textAlign: "center",
     lineHeight: 20,
   },
 });
