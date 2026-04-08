@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -7,28 +7,54 @@ import {
   TouchableOpacity,
   Alert,
   StyleSheet,
-} from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { COLORS, SENSOR_CONFIG, RADIUS } from '../utils/theme';
-import { fetchChannelInfo } from '../utils/api';
+  ActivityIndicator,
+} from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as Location from "expo-location";
+import { COLORS, SENSOR_CONFIG, RADIUS } from "../utils/theme";
+import { fetchChannelInfo } from "../utils/api";
 
 const FIELD_ENTRIES = Object.entries(SENSOR_CONFIG);
 
 export default function SettingsScreen() {
-  const [channelId, setChannelId] = useState('');
-  const [apiKey, setApiKey] = useState('');
+  const [channelId, setChannelId] = useState("");
+  const [apiKey, setApiKey] = useState("");
   const [channelName, setChannelName] = useState<string | null>(null);
+  const [locationStatus, setLocationStatus] = useState<string | null>(null);
+  const [locationName, setLocationName] = useState<string | null>(null);
+  const [detectingLocation, setDetectingLocation] = useState(false);
   const [testing, setTesting] = useState(false);
 
   useEffect(() => {
     (async () => {
       try {
-        const stored = await AsyncStorage.getItem('thingspeak_config');
+        const stored = await AsyncStorage.getItem("thingspeak_config");
         if (stored) {
           const cfg = JSON.parse(stored);
-          setChannelId(cfg.channelId || '');
-          setApiKey(cfg.apiKey || '');
+          setChannelId(cfg.channelId || "");
+          setApiKey(cfg.apiKey || "");
           setChannelName(cfg.channelName || null);
+        }
+        const loc = await AsyncStorage.getItem("user_location");
+        if (loc) {
+          const parsed = JSON.parse(loc);
+          setLocationStatus(`${parsed.latitude}, ${parsed.longitude}`);
+          if (parsed.name) {
+            setLocationName(parsed.name);
+          } else {
+            try {
+              const [place] = await Location.reverseGeocodeAsync({
+                latitude: parseFloat(parsed.latitude),
+                longitude: parseFloat(parsed.longitude),
+              });
+              if (place) {
+                const name = [place.city, place.region, place.country]
+                  .filter(Boolean)
+                  .join(", ");
+                setLocationName(name || null);
+              }
+            } catch {}
+          }
         }
       } catch (e) {
         // ignore
@@ -36,37 +62,87 @@ export default function SettingsScreen() {
     })();
   }, []);
 
+  const handleDetectLocation = async () => {
+    setDetectingLocation(true);
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== "granted") {
+        Alert.alert(
+          "Permission Denied",
+          "Location permission is required for weather comparison.",
+        );
+        setDetectingLocation(false);
+        return;
+      }
+      const position = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+      const lat = position.coords.latitude.toString();
+      const lon = position.coords.longitude.toString();
+      // Reverse geocode to get city name
+      let placeName = "";
+      try {
+        const [place] = await Location.reverseGeocodeAsync({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+        });
+        if (place) {
+          placeName = [place.city, place.region, place.country]
+            .filter(Boolean)
+            .join(", ");
+        }
+      } catch {}
+      await AsyncStorage.setItem(
+        "user_location",
+        JSON.stringify({ latitude: lat, longitude: lon, name: placeName }),
+      );
+      setLocationStatus(`${lat}, ${lon}`);
+      setLocationName(placeName || `${lat}, ${lon}`);
+    } catch (e: any) {
+      Alert.alert("Location Error", e.message || "Could not detect location.");
+    }
+    setDetectingLocation(false);
+  };
+
   const handleTestSave = async () => {
     if (!channelId.trim() || !apiKey.trim()) {
-      Alert.alert('Missing Fields', 'Please enter both Channel ID and Read API Key.');
+      Alert.alert(
+        "Missing Fields",
+        "Please enter both Channel ID and Read API Key.",
+      );
       return;
     }
     setTesting(true);
     try {
       const info = await fetchChannelInfo(channelId.trim(), apiKey.trim());
-      const name = info.name || 'Unknown Channel';
-      const fieldCount = Object.keys(info).filter((k) => k.startsWith('field') && info[k]).length;
+      const name = info.name || "Unknown Channel";
+      const fieldCount = Object.keys(info).filter(
+        (k) => k.startsWith("field") && info[k],
+      ).length;
 
       await AsyncStorage.setItem(
-        'thingspeak_config',
+        "thingspeak_config",
         JSON.stringify({
           channelId: channelId.trim(),
           apiKey: apiKey.trim(),
           channelName: name,
-        })
+        }),
       );
       setChannelName(name as string);
-      Alert.alert('Connected!', `Channel: ${name}\nActive fields: ${fieldCount}`);
+      Alert.alert(
+        "Connected!",
+        `Channel: ${name}\nActive fields: ${fieldCount}`,
+      );
     } catch (e: any) {
-      Alert.alert('Connection Failed', e.message);
+      Alert.alert("Connection Failed", e.message);
     }
     setTesting(false);
   };
 
   const handleClear = async () => {
-    await AsyncStorage.removeItem('thingspeak_config');
-    setChannelId('');
-    setApiKey('');
+    await AsyncStorage.removeItem("thingspeak_config");
+    setChannelId("");
+    setApiKey("");
     setChannelName(null);
   };
 
@@ -117,7 +193,7 @@ export default function SettingsScreen() {
             disabled={testing}
           >
             <Text style={styles.primaryBtnText}>
-              {testing ? 'Testing...' : 'Test & save'}
+              {testing ? "Testing..." : "Test & save"}
             </Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.dangerBtn} onPress={handleClear}>
@@ -127,11 +203,49 @@ export default function SettingsScreen() {
       </View>
 
       <View style={styles.card}>
+        <Text style={styles.cardTitle}>Location (for weather comparison)</Text>
+
+        {locationStatus ? (
+          <View>
+            <View style={styles.connectedPill}>
+              <View style={[styles.dot, { backgroundColor: COLORS.safe }]} />
+              <Text style={styles.connectedText}>
+                {locationName || locationStatus}
+              </Text>
+            </View>
+            <Text style={styles.hint}>Coordinates: {locationStatus}</Text>
+          </View>
+        ) : (
+          <Text style={styles.hint}>
+            Detect your location to compare kitchen temperature with outdoor
+            weather.
+          </Text>
+        )}
+
+        <TouchableOpacity
+          style={[styles.primaryBtn, detectingLocation && styles.btnDisabled]}
+          onPress={handleDetectLocation}
+          disabled={detectingLocation}
+        >
+          {detectingLocation ? (
+            <ActivityIndicator size="small" color="#FFFFFF" />
+          ) : (
+            <Text style={styles.primaryBtnText}>
+              {locationStatus ? "Update location" : "Detect location"}
+            </Text>
+          )}
+        </TouchableOpacity>
+      </View>
+
+      <View style={styles.card}>
         <Text style={styles.cardTitle}>How the data flows</Text>
         {[
-          { num: '1', text: 'ESP32 reads sensors every 15 seconds' },
-          { num: '2', text: 'Data is sent to ThingSpeak cloud via Wi-Fi' },
-          { num: '3', text: 'This app fetches the latest data from ThingSpeak' },
+          { num: "1", text: "ESP32 reads sensors every 15 seconds" },
+          { num: "2", text: "Data is sent to ThingSpeak cloud via Wi-Fi" },
+          {
+            num: "3",
+            text: "This app fetches the latest data from ThingSpeak",
+          },
         ].map((step) => (
           <View key={step.num} style={styles.stepRow}>
             <View style={styles.stepNum}>
@@ -149,7 +263,7 @@ export default function SettingsScreen() {
             <View style={[styles.fieldDot, { backgroundColor: cfg.color }]} />
             <Text style={styles.fieldKey}>{fieldKey}</Text>
             <Text style={styles.fieldLabel}>{cfg.label}</Text>
-            <Text style={styles.fieldUnit}>{cfg.unit || '—'}</Text>
+            <Text style={styles.fieldUnit}>{cfg.unit || "—"}</Text>
           </View>
         ))}
       </View>
@@ -175,7 +289,7 @@ const styles = StyleSheet.create({
   title: {
     color: COLORS.textPrimary,
     fontSize: 26,
-    fontWeight: '700',
+    fontWeight: "700",
     letterSpacing: -0.8,
     marginBottom: 20,
   },
@@ -190,17 +304,17 @@ const styles = StyleSheet.create({
   cardTitle: {
     color: COLORS.textPrimary,
     fontSize: 16,
-    fontWeight: '700',
+    fontWeight: "700",
     marginBottom: 14,
   },
   connectedPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     backgroundColor: COLORS.safeBg,
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: RADIUS.pill,
-    alignSelf: 'flex-start',
+    alignSelf: "flex-start",
     marginBottom: 14,
   },
   dot: {
@@ -212,12 +326,12 @@ const styles = StyleSheet.create({
   connectedText: {
     color: COLORS.safe,
     fontSize: 12,
-    fontWeight: '600',
+    fontWeight: "600",
   },
   inputLabel: {
     color: COLORS.textTertiary,
     fontSize: 10,
-    fontWeight: '700',
+    fontWeight: "700",
     letterSpacing: 0.5,
     marginBottom: 6,
     marginTop: 4,
@@ -229,24 +343,24 @@ const styles = StyleSheet.create({
     borderColor: COLORS.surfaceBorder,
     color: COLORS.textPrimary,
     fontSize: 15,
-    fontWeight: '500',
+    fontWeight: "500",
     paddingHorizontal: 14,
     paddingVertical: 12,
   },
   monoInput: {
-    fontFamily: 'monospace',
+    fontFamily: "monospace",
     letterSpacing: 1,
   },
   hint: {
     color: COLORS.textTertiary,
     fontSize: 11,
-    fontWeight: '500',
+    fontWeight: "500",
     marginTop: 6,
     marginBottom: 14,
     lineHeight: 16,
   },
   buttonRow: {
-    flexDirection: 'row',
+    flexDirection: "row",
     gap: 10,
     marginTop: 4,
   },
@@ -255,15 +369,15 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.accent,
     borderRadius: RADIUS.inner,
     paddingVertical: 14,
-    alignItems: 'center',
+    alignItems: "center",
   },
   btnDisabled: {
     opacity: 0.6,
   },
   primaryBtnText: {
-    color: '#FFFFFF',
+    color: "#FFFFFF",
     fontSize: 14,
-    fontWeight: '700',
+    fontWeight: "700",
   },
   dangerBtn: {
     paddingHorizontal: 20,
@@ -271,16 +385,16 @@ const styles = StyleSheet.create({
     borderRadius: RADIUS.inner,
     borderWidth: 1,
     borderColor: COLORS.danger,
-    alignItems: 'center',
+    alignItems: "center",
   },
   dangerBtnText: {
     color: COLORS.danger,
     fontSize: 14,
-    fontWeight: '700',
+    fontWeight: "700",
   },
   stepRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     marginBottom: 12,
   },
   stepNum: {
@@ -288,24 +402,24 @@ const styles = StyleSheet.create({
     height: 24,
     borderRadius: 12,
     backgroundColor: COLORS.elevated,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
     marginRight: 12,
   },
   stepNumText: {
     color: COLORS.accent,
     fontSize: 12,
-    fontWeight: '700',
+    fontWeight: "700",
   },
   stepText: {
     color: COLORS.textSecondary,
     fontSize: 13,
-    fontWeight: '500',
+    fontWeight: "500",
     flex: 1,
   },
   fieldRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     paddingVertical: 7,
     borderBottomWidth: 0.5,
     borderBottomColor: COLORS.surfaceBorder,
@@ -319,37 +433,37 @@ const styles = StyleSheet.create({
   fieldKey: {
     color: COLORS.textTertiary,
     fontSize: 11,
-    fontWeight: '600',
+    fontWeight: "600",
     width: 48,
-    fontFamily: 'monospace',
+    fontFamily: "monospace",
   },
   fieldLabel: {
     color: COLORS.textSecondary,
     fontSize: 13,
-    fontWeight: '500',
+    fontWeight: "500",
     flex: 1,
   },
   fieldUnit: {
     color: COLORS.textTertiary,
     fontSize: 12,
-    fontWeight: '500',
+    fontWeight: "500",
     width: 30,
-    textAlign: 'right',
+    textAlign: "right",
   },
   footer: {
-    alignItems: 'center',
+    alignItems: "center",
     marginTop: 10,
     paddingVertical: 20,
   },
   footerText: {
     color: COLORS.textTertiary,
     fontSize: 13,
-    fontWeight: '600',
+    fontWeight: "600",
   },
   footerSub: {
     color: COLORS.textTertiary,
     fontSize: 11,
-    fontWeight: '500',
+    fontWeight: "500",
     marginTop: 4,
     opacity: 0.6,
   },

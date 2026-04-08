@@ -6,6 +6,7 @@ export interface SensorData {
   gas: number;
   motion: number;
   distance: number;
+  humidity: number;
   [key: string]: string | number;
 }
 
@@ -17,6 +18,7 @@ interface ThingSpeakEntry {
   field3?: string;
   field4?: string;
   field5?: string;
+  field6?: string;
 }
 
 interface ThingSpeakChannel {
@@ -33,6 +35,7 @@ function parseFeed(entry: ThingSpeakEntry): SensorData {
     gas: parseFloat(entry.field3 || "") || 0,
     motion: parseFloat(entry.field4 || "") || 0,
     distance: (parseFloat(entry.field5 || "") || 0) / 10,
+    humidity: (parseFloat(entry.field6 || "") || 0) / 10,
   };
 }
 
@@ -131,4 +134,34 @@ export function formatChartTime(
     return `${day}/${mon} ${h}:${m}`;
   }
   return `${h}:${m}`;
+}
+
+export async function fetchOutdoorTemperature(
+  lat: string,
+  lon: string,
+  apiKey: string,
+): Promise<number | null> {
+  try {
+    const url = `https://my.meteoblue.com/packages/basic-1h?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&apikey=${encodeURIComponent(apiKey)}&format=json`;
+    const response = await fetch(url);
+    if (!response.ok) return null;
+    const data = await response.json();
+    const temps: number[] | undefined = data?.data_1h?.temperature;
+    if (!temps || temps.length === 0) return null;
+    // Find the value closest to now
+    const timeStrings: string[] = data?.data_1h?.time ?? [];
+    const now = Date.now();
+    let bestIdx = 0;
+    let bestDiff = Infinity;
+    for (let i = 0; i < timeStrings.length; i++) {
+      const diff = Math.abs(new Date(timeStrings[i]).getTime() - now);
+      if (diff < bestDiff) {
+        bestDiff = diff;
+        bestIdx = i;
+      }
+    }
+    return temps[bestIdx] ?? temps[0];
+  } catch {
+    return null;
+  }
 }

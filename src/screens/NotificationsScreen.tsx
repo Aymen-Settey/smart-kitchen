@@ -3,26 +3,15 @@ import {
   View,
   Text,
   ScrollView,
-  TextInput,
   TouchableOpacity,
-  Switch,
   Alert,
   StyleSheet,
+  RefreshControl,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { COLORS, SENSOR_CONFIG, RADIUS } from "../utils/theme";
 
-const SENSOR_FIELDS = ["field1", "field2", "field3", "field4", "field5"];
-const STORAGE_KEY = "notification_rules";
 const LOG_KEY = "notification_log";
-
-export interface NotificationRule {
-  fieldKey: string;
-  enabled: boolean;
-  threshold: string;
-  above: boolean; // true = trigger when value > threshold, false = when value < threshold
-  message: string;
-}
 
 export interface NotificationLogEntry {
   id: string;
@@ -31,27 +20,6 @@ export interface NotificationLogEntry {
   value: number;
   threshold: number;
   timestamp: string;
-}
-
-function defaultRules(): NotificationRule[] {
-  return SENSOR_FIELDS.map((fieldKey) => {
-    const cfg = SENSOR_CONFIG[fieldKey];
-    return {
-      fieldKey,
-      enabled: false,
-      threshold: "",
-      above: !cfg.invertDanger,
-      message: `${cfg.label} threshold exceeded!`,
-    };
-  });
-}
-
-export async function loadRules(): Promise<NotificationRule[]> {
-  try {
-    const stored = await AsyncStorage.getItem(STORAGE_KEY);
-    if (stored) return JSON.parse(stored);
-  } catch {}
-  return defaultRules();
 }
 
 export async function loadLog(): Promise<NotificationLogEntry[]> {
@@ -69,30 +37,23 @@ export async function appendLog(entry: NotificationLogEntry) {
 }
 
 export default function NotificationsScreen() {
-  const [rules, setRules] = useState<NotificationRule[]>(defaultRules());
   const [log, setLog] = useState<NotificationLogEntry[]>([]);
-  const [showLog, setShowLog] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const refreshLog = useCallback(async () => {
+    const l = await loadLog();
+    setLog(l);
+  }, []);
 
   useEffect(() => {
-    (async () => {
-      const r = await loadRules();
-      setRules(r);
-      const l = await loadLog();
-      setLog(l);
-    })();
+    refreshLog();
   }, []);
 
-  const saveRules = useCallback(async (updated: NotificationRule[]) => {
-    setRules(updated);
-    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-  }, []);
-
-  const updateRule = (fieldKey: string, patch: Partial<NotificationRule>) => {
-    const updated = rules.map((r) =>
-      r.fieldKey === fieldKey ? { ...r, ...patch } : r,
-    );
-    saveRules(updated);
-  };
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await refreshLog();
+    setRefreshing(false);
+  }, [refreshLog]);
 
   const clearLog = async () => {
     Alert.alert("Clear History", "Remove all notification history?", [
@@ -108,165 +69,88 @@ export default function NotificationsScreen() {
     ]);
   };
 
-  const refreshLog = async () => {
-    const l = await loadLog();
-    setLog(l);
+  const ALERT_ICONS: Record<string, string> = {
+    danger_flame_gas: "\u26A0\uFE0F",
+    gas_warning: "\uD83D\uDCA8",
+    temp_high: "\uD83C\uDF21\uFE0F",
+    night_motion: "\uD83C\uDF19",
   };
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={styles.content}
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={onRefresh}
+          tintColor={COLORS.accent}
+          colors={[COLORS.accent]}
+        />
+      }
+    >
       <Text style={styles.title}>Notifications</Text>
       <Text style={styles.subtitle}>
-        Set thresholds for each sensor. You'll get a notification when a value
-        crosses the limit.
+        Smart alerts are triggered automatically based on sensor readings,
+        weather comparison, and time of day.
       </Text>
 
-      {rules.map((rule) => {
-        const cfg = SENSOR_CONFIG[rule.fieldKey];
-        if (!cfg) return null;
-
-        return (
-          <View
-            key={rule.fieldKey}
-            style={[styles.ruleCard, { borderLeftColor: cfg.color }]}
-          >
-            <View style={styles.ruleHeader}>
-              <View style={styles.ruleLabel}>
-                <View style={[styles.dot, { backgroundColor: cfg.color }]} />
-                <Text style={styles.ruleName}>{cfg.label}</Text>
-              </View>
-              <Switch
-                value={rule.enabled}
-                onValueChange={(v) => updateRule(rule.fieldKey, { enabled: v })}
-                trackColor={{
-                  false: COLORS.surfaceBorder,
-                  true: COLORS.accent + "60",
-                }}
-                thumbColor={rule.enabled ? COLORS.accent : COLORS.textTertiary}
-              />
-            </View>
-
-            {rule.enabled && (
-              <View style={styles.ruleBody}>
-                <View style={styles.thresholdRow}>
-                  <TouchableOpacity
-                    style={[styles.dirPill, rule.above && styles.dirPillActive]}
-                    onPress={() => updateRule(rule.fieldKey, { above: true })}
-                  >
-                    <Text
-                      style={[
-                        styles.dirText,
-                        rule.above && styles.dirTextActive,
-                      ]}
-                    >
-                      Above
-                    </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[
-                      styles.dirPill,
-                      !rule.above && styles.dirPillActive,
-                    ]}
-                    onPress={() => updateRule(rule.fieldKey, { above: false })}
-                  >
-                    <Text
-                      style={[
-                        styles.dirText,
-                        !rule.above && styles.dirTextActive,
-                      ]}
-                    >
-                      Below
-                    </Text>
-                  </TouchableOpacity>
-                  <TextInput
-                    style={styles.thresholdInput}
-                    value={rule.threshold}
-                    onChangeText={(t) =>
-                      updateRule(rule.fieldKey, { threshold: t })
-                    }
-                    placeholder="Value"
-                    placeholderTextColor={COLORS.textTertiary}
-                    keyboardType="numeric"
-                  />
-                  {cfg.unit ? (
-                    <Text style={styles.unitLabel}>{cfg.unit}</Text>
-                  ) : null}
-                </View>
-
-                <Text style={styles.msgLabel}>Custom message</Text>
-                <TextInput
-                  style={styles.msgInput}
-                  value={rule.message}
-                  onChangeText={(t) =>
-                    updateRule(rule.fieldKey, { message: t })
-                  }
-                  placeholder="Notification message..."
-                  placeholderTextColor={COLORS.textTertiary}
-                  multiline
-                />
-              </View>
-            )}
-          </View>
-        );
-      })}
-
-      <View style={styles.logSection}>
-        <TouchableOpacity
-          style={styles.logToggle}
-          onPress={() => {
-            if (!showLog) refreshLog();
-            setShowLog(!showLog);
-          }}
-        >
-          <Text style={styles.logToggleText}>
-            {showLog ? "Hide" : "Show"} Notification History
-          </Text>
-          <Text style={styles.logBadge}>{log.length}</Text>
-        </TouchableOpacity>
-
-        {showLog && (
-          <>
-            {log.length > 0 && (
-              <TouchableOpacity style={styles.clearBtn} onPress={clearLog}>
-                <Text style={styles.clearBtnText}>Clear all</Text>
-              </TouchableOpacity>
-            )}
-            {log.length === 0 ? (
-              <Text style={styles.emptyLog}>No notifications yet.</Text>
-            ) : (
-              log.slice(0, 50).map((entry) => {
-                const cfg = SENSOR_CONFIG[entry.fieldKey];
-                return (
-                  <View key={entry.id} style={styles.logEntry}>
-                    <View style={styles.logEntryHeader}>
-                      <View
-                        style={[
-                          styles.dot,
-                          { backgroundColor: cfg?.color || COLORS.accent },
-                        ]}
-                      />
-                      <Text style={styles.logEntryLabel}>
-                        {cfg?.label || entry.fieldKey}
-                      </Text>
-                      <Text style={styles.logEntryTime}>
-                        {new Date(entry.timestamp).toLocaleString()}
-                      </Text>
-                    </View>
-                    <Text style={styles.logEntryMsg}>{entry.message}</Text>
-                    <Text style={styles.logEntryValue}>
-                      Value: {entry.value} · Threshold: {entry.threshold}
-                    </Text>
-                  </View>
-                );
-              })
-            )}
-          </>
-        )}
+      <View style={styles.infoCard}>
+        <Text style={styles.infoTitle}>Active alert rules</Text>
+        <Text style={styles.infoItem}>
+          {"\u26A0\uFE0F"} Flame + Gas detected → Danger alert
+        </Text>
+        <Text style={styles.infoItem}>
+          {"\uD83D\uDCA8"} Gas above threshold → Stove safety warning
+        </Text>
+        <Text style={styles.infoItem}>
+          {"\uD83C\uDF21\uFE0F"} Kitchen temp 10°C+ above outside → Overheating
+          alert
+        </Text>
+        <Text style={styles.infoItem}>
+          {"\uD83C\uDF19"} Motion after 11 PM → Night intrusion alert
+        </Text>
       </View>
+
+      <View style={styles.logHeader}>
+        <Text style={styles.logHeaderText}>History</Text>
+        <View style={styles.logHeaderRight}>
+          <Text style={styles.logBadge}>{log.length}</Text>
+          {log.length > 0 && (
+            <TouchableOpacity onPress={clearLog}>
+              <Text style={styles.clearBtnText}>Clear</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      </View>
+
+      {log.length === 0 ? (
+        <Text style={styles.emptyLog}>
+          No notifications yet. Alerts will appear here when triggered.
+        </Text>
+      ) : (
+        log.slice(0, 50).map((entry, index) => {
+          const cfg = SENSOR_CONFIG[entry.fieldKey];
+          const icon = ALERT_ICONS[entry.fieldKey] || "\uD83D\uDD14";
+          return (
+            <View key={`${entry.id}-${index}`} style={styles.logEntry}>
+              <View style={styles.logEntryHeader}>
+                <Text style={styles.logIcon}>{icon}</Text>
+                <Text style={styles.logEntryLabel}>
+                  {cfg?.label || entry.fieldKey}
+                </Text>
+                <Text style={styles.logEntryTime}>
+                  {new Date(entry.timestamp).toLocaleString()}
+                </Text>
+              </View>
+              <Text style={styles.logEntryMsg}>{entry.message}</Text>
+            </View>
+          );
+        })
+      )}
     </ScrollView>
   );
 }
-
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -291,119 +175,41 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     marginBottom: 20,
   },
-  ruleCard: {
+  infoCard: {
     backgroundColor: COLORS.surface,
     borderRadius: RADIUS.card,
     borderWidth: 0.5,
     borderColor: COLORS.surfaceBorder,
-    borderLeftWidth: 3,
     padding: 14,
-    marginBottom: 12,
+    marginBottom: 20,
   },
-  ruleHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  ruleLabel: {
-    flexDirection: "row",
-    alignItems: "center",
-    flex: 1,
-  },
-  dot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    marginRight: 8,
-  },
-  ruleName: {
+  infoTitle: {
     color: COLORS.textPrimary,
     fontSize: 15,
-    fontWeight: "600",
-  },
-  ruleBody: {
-    marginTop: 14,
-  },
-  thresholdRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    marginBottom: 12,
-  },
-  dirPill: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: RADIUS.pill,
-    backgroundColor: COLORS.elevated,
-    borderWidth: 0.5,
-    borderColor: COLORS.surfaceBorder,
-  },
-  dirPillActive: {
-    backgroundColor: COLORS.accent + "20",
-    borderColor: COLORS.accent + "50",
-  },
-  dirText: {
-    color: COLORS.textTertiary,
-    fontSize: 12,
-    fontWeight: "600",
-  },
-  dirTextActive: {
-    color: COLORS.accent,
-  },
-  thresholdInput: {
-    flex: 1,
-    backgroundColor: COLORS.elevated,
-    borderRadius: RADIUS.inner,
-    borderWidth: 0.5,
-    borderColor: COLORS.surfaceBorder,
-    color: COLORS.textPrimary,
-    fontSize: 14,
-    fontWeight: "600",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  unitLabel: {
-    color: COLORS.textTertiary,
-    fontSize: 13,
-    fontWeight: "500",
-  },
-  msgLabel: {
-    color: COLORS.textSecondary,
-    fontSize: 11,
-    fontWeight: "600",
-    letterSpacing: 0.5,
-    marginBottom: 6,
-  },
-  msgInput: {
-    backgroundColor: COLORS.elevated,
-    borderRadius: RADIUS.inner,
-    borderWidth: 0.5,
-    borderColor: COLORS.surfaceBorder,
-    color: COLORS.textPrimary,
-    fontSize: 13,
-    fontWeight: "500",
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    minHeight: 40,
-  },
-  logSection: {
-    marginTop: 10,
-  },
-  logToggle: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: COLORS.surface,
-    borderRadius: RADIUS.card,
-    borderWidth: 0.5,
-    borderColor: COLORS.surfaceBorder,
-    padding: 14,
+    fontWeight: "700",
     marginBottom: 10,
   },
-  logToggleText: {
+  infoItem: {
+    color: COLORS.textSecondary,
+    fontSize: 13,
+    fontWeight: "500",
+    lineHeight: 22,
+  },
+  logHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  logHeaderText: {
     color: COLORS.textPrimary,
-    fontSize: 15,
-    fontWeight: "600",
+    fontSize: 18,
+    fontWeight: "700",
+  },
+  logHeaderRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
   },
   logBadge: {
     color: COLORS.accent,
@@ -415,10 +221,6 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     overflow: "hidden",
   },
-  clearBtn: {
-    alignSelf: "flex-end",
-    marginBottom: 10,
-  },
   clearBtnText: {
     color: COLORS.danger,
     fontSize: 12,
@@ -429,7 +231,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "500",
     textAlign: "center",
-    paddingVertical: 20,
+    paddingVertical: 30,
   },
   logEntry: {
     backgroundColor: COLORS.surface,
@@ -443,6 +245,10 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     marginBottom: 4,
+  },
+  logIcon: {
+    fontSize: 14,
+    marginRight: 6,
   },
   logEntryLabel: {
     color: COLORS.textSecondary,
@@ -460,10 +266,5 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "500",
     marginBottom: 2,
-  },
-  logEntryValue: {
-    color: COLORS.textTertiary,
-    fontSize: 11,
-    fontWeight: "500",
   },
 });

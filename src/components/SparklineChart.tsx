@@ -21,6 +21,7 @@ interface SparklineChartProps {
   warningThreshold: number | null;
   dangerThreshold: number | null;
   showDate?: boolean;
+  subtitle?: string;
 }
 
 export default function SparklineChart({
@@ -31,6 +32,7 @@ export default function SparklineChart({
   warningThreshold,
   dangerThreshold,
   showDate,
+  subtitle,
 }: SparklineChartProps) {
   if (!data || data.length < 2) {
     return (
@@ -77,10 +79,14 @@ export default function SparklineChart({
     <View style={styles.card}>
       <View style={styles.header}>
         <Text style={styles.label}>{label}</Text>
-        <Text style={[styles.currentValue, { color }]}>
-          {latestValue.toFixed(1)}
-          {unit ? ` ${unit}` : ""}
-        </Text>
+        {subtitle ? (
+          <Text style={[styles.subtitleText, { color }]}>{subtitle}</Text>
+        ) : (
+          <Text style={[styles.currentValue, { color }]}>
+            {latestValue.toFixed(1)}
+            {unit ? ` ${unit}` : ""}
+          </Text>
+        )}
       </View>
       <Svg
         width="100%"
@@ -193,6 +199,11 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "700",
     letterSpacing: -0.5,
+  },
+  subtitleText: {
+    fontSize: 11,
+    fontWeight: "600",
+    letterSpacing: -0.3,
   },
   placeholder: {
     height: CHART_HEIGHT,
