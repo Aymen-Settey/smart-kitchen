@@ -35,6 +35,9 @@ const SENSOR_FIELDS = [
   "field6",
 ];
 
+const HUMIDITY_WARNING = 60;
+const HUMIDITY_DANGER = 70;
+
 interface TimeFilter {
   label: string;
   minutes: number;
@@ -142,6 +145,34 @@ async function checkSmartAlerts(
       "night_motion",
       motion,
       1,
+    );
+  }
+
+  // 5) Humidity checks
+  const humidity = data.humidity as number;
+  const anyHumidityDanger = recentData.some((d) => (d.humidity as number) > HUMIDITY_DANGER);
+  const anyHumidityWarning = recentData.some((d) => (d.humidity as number) > HUMIDITY_WARNING);
+
+  // Critical humidity → danger
+  if (shouldAlert("humidity_danger", anyHumidityDanger)) {
+    await logAlert(
+      "\u26A0\uFE0F Critical Humidity!",
+      `Humidity at ${humidity.toFixed(1)}%. Trapped steam detected. Open window or run exhaust fan immediately.`,
+      "humidity_danger",
+      humidity,
+      HUMIDITY_DANGER,
+    );
+  }
+
+  // High humidity warning
+  const humidityWarning = anyHumidityWarning && !anyHumidityDanger;
+  if (shouldAlert("humidity_warning", humidityWarning)) {
+    await logAlert(
+      "\uD83D\uDCA7 High Humidity Warning",
+      `Humidity at ${humidity.toFixed(1)}%. Poor ventilation may cause mold.`,
+      "humidity_warning",
+      humidity,
+      HUMIDITY_WARNING,
     );
   }
 }

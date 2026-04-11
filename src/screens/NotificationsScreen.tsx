@@ -74,6 +74,8 @@ export default function NotificationsScreen() {
     gas_warning: "\uD83D\uDCA8",
     temp_high: "\uD83C\uDF21\uFE0F",
     night_motion: "\uD83C\uDF19",
+    humidity_danger: "\uD83D\uDCA7",
+    humidity_warning: "\uD83D\uDCA7",
   };
 
   return (
@@ -110,6 +112,13 @@ export default function NotificationsScreen() {
         <Text style={styles.infoItem}>
           {"\uD83C\uDF19"} Motion after 11 PM → Night intrusion alert
         </Text>
+        <Text style={styles.infoItem}>
+          {"\uD83D\uDCA7"} Humidity {">"}70% → Trapped steam, open window / run fan
+        </Text>
+        <Text style={styles.infoItem}>
+          {"\uD83D\uDCA7"} Humidity {">"}60% for 5+ minutes → Poor ventilation warning
+        </Text>
+        
       </View>
 
       <View style={styles.logHeader}>

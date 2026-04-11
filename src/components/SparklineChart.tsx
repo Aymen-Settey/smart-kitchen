@@ -1,6 +1,6 @@
-import React from "react";
-import { View, Text, StyleSheet } from "react-native";
-import Svg, { Polyline, Line, Text as SvgText } from "react-native-svg";
+import React, { useState, useRef } from "react";
+import { View, Text, StyleSheet, PanResponder } from "react-native";
+import Svg, { Polyline, Line, Text as SvgText, Circle } from "react-native-svg";
 import { COLORS, RADIUS } from "../utils/theme";
 import { formatChartTime } from "../utils/api";
 
@@ -34,6 +34,65 @@ export default function SparklineChart({
   showDate,
   subtitle,
 }: SparklineChartProps) {
+  const [tooltip, setTooltip] = useState<{
+    visible: boolean;
+    x: number;
+    y: number;
+    value: number;
+    time: string;
+    index: number;
+  } | null>(null);
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderGrant: (evt, gestureState) => {
+        const { locationX } = evt.nativeEvent;
+        const relativeX = locationX - PADDING.left;
+        const plotWidth = CHART_WIDTH - PADDING.left - PADDING.right;
+        const index = Math.round((relativeX / plotWidth) * (data.length - 1));
+        const clampedIndex = Math.max(0, Math.min(data.length - 1, index));
+
+        const point = data[clampedIndex];
+        const pointX = toX(clampedIndex);
+        const pointY = toY(point.value);
+
+        setTooltip({
+          visible: true,
+          x: pointX,
+          y: pointY,
+          value: point.value,
+          time: formatChartTime(point.time, showDate),
+          index: clampedIndex,
+        });
+      },
+      onPanResponderMove: (evt, gestureState) => {
+        const { locationX } = evt.nativeEvent;
+        const relativeX = locationX - PADDING.left;
+        const plotWidth = CHART_WIDTH - PADDING.left - PADDING.right;
+        const index = Math.round((relativeX / plotWidth) * (data.length - 1));
+        const clampedIndex = Math.max(0, Math.min(data.length - 1, index));
+
+        const point = data[clampedIndex];
+        const pointX = toX(clampedIndex);
+        const pointY = toY(point.value);
+
+        setTooltip({
+          visible: true,
+          x: pointX,
+          y: pointY,
+          value: point.value,
+          time: formatChartTime(point.time, showDate),
+          index: clampedIndex,
+        });
+      },
+      onPanResponderRelease: () => {
+        setTooltip(null);
+      },
+    })
+  );
+
   if (!data || data.length < 2) {
     return (
       <View style={styles.card}>
@@ -88,11 +147,12 @@ export default function SparklineChart({
           </Text>
         )}
       </View>
-      <Svg
-        width="100%"
-        height={CHART_HEIGHT}
-        viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`}
-      >
+      <View style={styles.chartContainer} {...panResponder.current.panHandlers}>
+        <Svg
+          width="100%"
+          height={CHART_HEIGHT}
+          viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`}
+        >
         {gridLines.map((g, i) => (
           <React.Fragment key={i}>
             <Line
@@ -170,7 +230,40 @@ export default function SparklineChart({
         >
           {lastTime}
         </SvgText>
+
+        {tooltip && (
+          <>
+            <Circle
+              cx={tooltip.x}
+              cy={tooltip.y}
+              r="3"
+              fill={color}
+              stroke={COLORS.background}
+              strokeWidth="1"
+            />
+            <SvgText
+              x={Math.max(50, Math.min(CHART_WIDTH - 50, tooltip.x))}
+              y={Math.max(30, tooltip.y - 8)}
+              fill={COLORS.textPrimary}
+              fontSize="10"
+              textAnchor="middle"
+              fontWeight="600"
+            >
+              {tooltip.value.toFixed(1)}{unit}
+            </SvgText>
+            <SvgText
+              x={Math.max(50, Math.min(CHART_WIDTH - 50, tooltip.x))}
+              y={Math.max(20, tooltip.y - 18)}
+              fill={COLORS.textSecondary}
+              fontSize="8"
+              textAnchor="middle"
+            >
+              {tooltip.time}
+            </SvgText>
+          </>
+        )}
       </Svg>
+      </View>
     </View>
   );
 }
@@ -204,6 +297,9 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "600",
     letterSpacing: -0.3,
+  },
+  chartContainer: {
+    position: "relative",
   },
   placeholder: {
     height: CHART_HEIGHT,
