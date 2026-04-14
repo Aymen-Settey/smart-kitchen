@@ -67,13 +67,14 @@ function shouldAlert(type: string, conditionMet: boolean): boolean {
 async function logAlert(
   title: string,
   body: string,
+  fieldKey: string,
   type: string,
   value: number,
   threshold: number,
 ) {
   await appendLog({
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${type}`,
-    fieldKey: type,
+    fieldKey,
     message: `${title}: ${body}`,
     value,
     threshold,
@@ -92,12 +93,15 @@ async function checkSmartAlerts(
   const gas = data.gas as number;
   const flame = data.flame as number;
   const motion = data.motion as number;
+  const distance = data.distance as number;
   const gasThreshold = SENSOR_CONFIG.field3.warningThreshold ?? 500;
+  const stoveProximityThreshold = SENSOR_CONFIG.field5.dangerThreshold ?? 30;
 
   // Check if any reading in the recent window triggered the condition
   const anyFlame = recentData.some((d) => (d.flame as number) >= 1);
   const anyGasHigh = recentData.some((d) => (d.gas as number) > gasThreshold);
   const anyMotion = recentData.some((d) => (d.motion as number) >= 1);
+  const stoveProximityDanger = distance <= stoveProximityThreshold;
 
   // 1) Flame + Gas together → DANGER (highest priority)
   const flameAndGas = anyFlame && anyGasHigh;
@@ -105,6 +109,7 @@ async function checkSmartAlerts(
     await logAlert(
       "\u26A0\uFE0F DANGER",
       `Flame detected & gas at ${gas.toFixed(0)} (threshold: ${gasThreshold}). Take immediate action!`,
+      "field1",
       "danger_flame_gas",
       gas,
       gasThreshold,
@@ -116,10 +121,23 @@ async function checkSmartAlerts(
   if (shouldAlert("gas_warning", gasHigh)) {
     await logAlert(
       "\uD83D\uDCA8 Gas Detected",
-      `Gas level at ${gas.toFixed(0)} (threshold: ${gasThreshold}). Don\u2019t get close to the stove with fire in hand.`,
+      `Gas level at ${gas.toFixed(0)} (threshold: ${gasThreshold}). Don't get close to the stove with fire in hand.`,
+      "field3",
       "gas_warning",
       gas,
       gasThreshold,
+    );
+  }
+
+  // 2.5) Stove proximity safety warning
+  if (shouldAlert("stove_proximity", stoveProximityDanger)) {
+    await logAlert(
+      "\uD83D\uDD25 Stove Proximity",
+      `Object detected within ${distance.toFixed(1)}cm of the stove (<${stoveProximityThreshold}cm). Keep people and items away from burners.`,
+      "field5",
+      "stove_proximity",
+      distance,
+      stoveProximityThreshold,
     );
   }
 
@@ -128,7 +146,8 @@ async function checkSmartAlerts(
   if (shouldAlert("temp_high", tempHigh)) {
     await logAlert(
       "\uD83C\uDF21\uFE0F Kitchen Overheating",
-      `Kitchen: ${kitchenTemp.toFixed(1)}\u00b0C, Outside: ${outdoorTemp!.toFixed(1)}\u00b0C (+${(kitchenTemp - outdoorTemp!).toFixed(1)}\u00b0C difference).`,
+      `Kitchen: ${kitchenTemp.toFixed(1)}\u00B0C, Outside: ${outdoorTemp!.toFixed(1)}\u00B0C (+${(kitchenTemp - outdoorTemp!).toFixed(1)}\u00B0C difference).`,
+      "field2",
       "temp_high",
       kitchenTemp,
       outdoorTemp! + 10,
@@ -142,6 +161,7 @@ async function checkSmartAlerts(
     await logAlert(
       "\uD83C\uDF19 Late Night Motion",
       `Motion detected at ${new Date().toLocaleTimeString()}. Someone could be in your kitchen.`,
+      "field4",
       "night_motion",
       motion,
       1,
@@ -158,6 +178,7 @@ async function checkSmartAlerts(
     await logAlert(
       "\u26A0\uFE0F Critical Humidity!",
       `Humidity at ${humidity.toFixed(1)}%. Trapped steam detected. Open window or run exhaust fan immediately.`,
+      "field6",
       "humidity_danger",
       humidity,
       HUMIDITY_DANGER,
@@ -170,6 +191,7 @@ async function checkSmartAlerts(
     await logAlert(
       "\uD83D\uDCA7 High Humidity Warning",
       `Humidity at ${humidity.toFixed(1)}%. Poor ventilation may cause mold.`,
+      "field6",
       "humidity_warning",
       humidity,
       HUMIDITY_WARNING,

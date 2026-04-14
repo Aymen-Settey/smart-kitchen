@@ -86,8 +86,8 @@ export const SENSOR_CONFIG: Record<string, SensorConfig> = {
     bg: "#1A1030",
     min: 0,
     max: 4095,
-    warningThreshold: 500,
-    dangerThreshold: 700,
+    warningThreshold: 2900,
+    dangerThreshold: 3000,
     decimals: 0,
   },
   field4: {
@@ -113,9 +113,10 @@ export const SENSOR_CONFIG: Record<string, SensorConfig> = {
     bg: "#0A2820",
     min: -50,
     max: 400,
-    warningThreshold: null,
-    dangerThreshold: null,
+    warningThreshold: 60,
+    dangerThreshold: 30,
     decimals: 1,
+    invertDanger: true,
   },
   field6: {
     key: "humidity",

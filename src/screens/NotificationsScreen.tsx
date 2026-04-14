@@ -47,7 +47,11 @@ export default function NotificationsScreen() {
 
   useEffect(() => {
     refreshLog();
-  }, []);
+    
+    // Poll for new alerts every 3 seconds
+    const interval = setInterval(refreshLog, 3000);
+    return () => clearInterval(interval);
+  }, [refreshLog]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -76,6 +80,7 @@ export default function NotificationsScreen() {
     night_motion: "\uD83C\uDF19",
     humidity_danger: "\uD83D\uDCA7",
     humidity_warning: "\uD83D\uDCA7",
+    stove_proximity: "🔥",
   };
 
   return (
@@ -118,7 +123,9 @@ export default function NotificationsScreen() {
         <Text style={styles.infoItem}>
           {"\uD83D\uDCA7"} Humidity {">"}60% for 5+ minutes → Poor ventilation warning
         </Text>
-        
+        <Text style={styles.infoItem}>
+          {"🔥"} Distance {"<"} 30cm → Stove proximity danger
+        </Text>
       </View>
 
       <View style={styles.logHeader}>
